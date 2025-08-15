@@ -1,26 +1,50 @@
-
 <!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>Snowtee POS 系统</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POS 录入系统</title>
 <style>
-body { font-family: Arial; margin: 20px; }
-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
-input, select { padding: 4px; }
-button { padding: 6px 10px; margin: 2px; }
+body { font-family: Arial; margin: 10px; padding:0; background:#f7f7f7; }
+h1,h3 { margin:10px 0; }
+section { background:#fff; padding:10px; margin-bottom:15px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1); }
+input, select, button { padding:10px; margin:5px 0; font-size:16px; border-radius:5px; }
+button { cursor:pointer; background:#4CAF50; color:#fff; border:none; }
+button:hover { background:#45a049; }
+table { width:100%; border-collapse: collapse; margin-top:10px; font-size:14px; }
+th, td { border:1px solid #ccc; padding:6px; text-align:center; }
+thead { background:#eee; }
+td input { width:80px; }
+@media (max-width:600px) {
+  table, thead, tbody, th, td, tr { display:block; }
+  tr { margin-bottom:10px; border-bottom:1px solid #ccc; }
+  th { display:none; }
+  td { display:flex; justify-content:space-between; padding:6px 10px; }
+  td:before { content: attr(data-label); font-weight:bold; }
+}
 </style>
 </head>
 <body>
-<h1>Snowtee POS 系统</h1>
+<h1>POS 录入系统</h1>
 
+<section>
 <h3>产品上架</h3>
-产品名: <input id="new-product-name">
-价格: <input id="new-product-price" type="number" step="0.01">
+产品名: <input id="new-product-name" placeholder="请输入产品名">
+价格: <input id="new-product-price" type="number" step="0.01" placeholder="价格">
 <button onclick="addProduct()">上架</button>
+</section>
 
+<section>
+<h3>平台上架</h3>
+平台名: <input id="new-platform-name" placeholder="请输入平台名">
+<button onclick="addPlatform()">上架平台</button>
+</section>
+
+<section>
 <h3>新订单录入</h3>
+订单平台:
+<select id="order-platform"><option value="">请选择平台</option></select>
+
 <table id="order-table">
 <thead>
 <tr><th>产品</th><th>单价</th><th>数量</th><th>优惠金额</th><th>操作</th></tr>
@@ -30,146 +54,69 @@ button { padding: 6px 10px; margin: 2px; }
 <button onclick="addOrderRow()">+ 添加产品</button>
 <br><br>
 <button onclick="saveOrder()">保存订单</button>
+</section>
 
+<section>
 <h3>当日统计</h3>
 <div id="summary"></div>
+</section>
 
+<section>
 <h3>各产品销量及金额</h3>
 <div id="product-summary"></div>
+</section>
 
+<section>
 <h3>当日订单明细</h3>
+<button onclick="exportExcel()">导出 Excel</button>
 <div id="orders"></div>
+</section>
 
 <script>
-let products = [];
-
-function loadProducts() {
-    fetch('/api/products')
-    .then(r => r.json())
-    .then(data => { products = data; });
-}
-
-function addProduct() {
-    const name = document.getElementById('new-product-name').value.trim();
-    const price = parseFloat(document.getElementById('new-product-price').value);
-    if(!name || isNaN(price)){ alert('请填写产品名和价格'); return; }
-    fetch('/api/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({name, price})
-    })
-    .then(r => r.json())
-    .then(d => {
-        alert('产品已上架');
-        document.getElementById('new-product-name').value = '';
-        document.getElementById('new-product-price').value = '';
-        loadProducts();
+let products=[],platforms=[];
+function loadProducts(){fetch('/api/products').then(r=>r.json()).then(d=>products=d);}
+function loadPlatforms(){
+    fetch('/api/platforms').then(r=>r.json()).then(d=>{
+        platforms=d;
+        const sel=document.getElementById('order-platform');
+        sel.innerHTML='<option value="">请选择平台</option>';
+        platforms.forEach(p=>{const o=document.createElement('option'); o.value=p.id; o.textContent=p.name; sel.appendChild(o);});
     });
 }
-
+function addProduct(){
+    const name=document.getElementById('new-product-name').value.trim();
+    const price=parseFloat(document.getElementById('new-product-price').value);
+    if(!name || isNaN(price)){alert('请填写产品名和价格');return;}
+    fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,price})})
+    .then(r=>r.json()).then(()=>{alert('产品已上架');document.getElementById('new-product-name').value='';document.getElementById('new-product-price').value='';loadProducts();});
+}
+function addPlatform(){
+    const name=document.getElementById('new-platform-name').value.trim();
+    if(!name){alert('请填写平台名');return;}
+    fetch('/api/platforms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(r=>r.json()).then(()=>{alert('平台已上架');document.getElementById('new-platform-name').value='';loadPlatforms();});
+}
 function addOrderRow(){
-    const tbody = document.querySelector('#order-table tbody');
-    const row = document.createElement('tr');
-
-    const tdSelect = document.createElement('td');
-    const select = document.createElement('select');
-    select.onchange = () => updatePrice(select);
-    const defaultOption = document.createElement('option');
-    defaultOption.value = '';
-    defaultOption.textContent = '请选择';
-    select.appendChild(defaultOption);
-    products.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = p.name;
-        opt.dataset.price = p.price;
-        select.appendChild(opt);
-    });
-    tdSelect.appendChild(select);
-    row.appendChild(tdSelect);
-
-    const tdPrice = document.createElement('td');
-    const inputPrice = document.createElement('input');
-    inputPrice.type = 'number';
-    inputPrice.step = '0.01';
-    inputPrice.readOnly = true;
-    tdPrice.appendChild(inputPrice);
-    row.appendChild(tdPrice);
-
-    const tdQty = document.createElement('td');
-    const inputQty = document.createElement('input');
-    inputQty.type = 'number';
-    inputQty.value = 1;
-    tdQty.appendChild(inputQty);
-    row.appendChild(tdQty);
-
-    const tdDiscount = document.createElement('td');
-    const inputDiscount = document.createElement('input');
-    inputDiscount.type = 'number';
-    inputDiscount.step = '0.01';
-    inputDiscount.value = 0;
-    tdDiscount.appendChild(inputDiscount);
-    row.appendChild(tdDiscount);
-
-    const tdRemove = document.createElement('td');
-    const btnRemove = document.createElement('button');
-    btnRemove.textContent = '删除';
-    btnRemove.onclick = () => row.remove();
-    tdRemove.appendChild(btnRemove);
-    row.appendChild(tdRemove);
-
+    const tbody=document.querySelector('#order-table tbody');
+    const row=document.createElement('tr');
+    const tdSelect=document.createElement('td');
+    const sel=document.createElement('select'); sel.onchange=()=>updatePrice(sel);
+    const dopt=document.createElement('option'); dopt.value=''; dopt.textContent='请选择'; sel.appendChild(dopt);
+    products.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;o.dataset.price=p.price;sel.appendChild(o);});
+    tdSelect.appendChild(sel); tdSelect.setAttribute('data-label','产品'); row.appendChild(tdSelect);
+    const tdPrice=document.createElement('td'); const ip=document.createElement('input'); ip.type='number';ip.step='0.01'; ip.readOnly=true; tdPrice.appendChild(ip); tdPrice.setAttribute('data-label','单价'); row.appendChild(tdPrice);
+    const tdQty=document.createElement('td'); const iq=document.createElement('input'); iq.type='number'; iq.value=1; tdQty.appendChild(iq); tdQty.setAttribute('data-label','数量'); row.appendChild(tdQty);
+    const tdDisc=document.createElement('td'); const idisc=document.createElement('input'); idisc.type='number'; idisc.step='0.01'; idisc.value=0; tdDisc.appendChild(idisc); tdDisc.setAttribute('data-label','优惠'); row.appendChild(tdDisc);
+    const tdRemove=document.createElement('td'); const btn=document.createElement('button'); btn.textContent='删除'; btn.onclick=()=>row.remove(); tdRemove.appendChild(btn); tdRemove.setAttribute('data-label','操作'); row.appendChild(tdRemove);
     tbody.appendChild(row);
 }
-
-function updatePrice(select){
-    const priceInput = select.parentElement.nextElementSibling.firstElementChild;
-    const option = select.selectedOptions[0];
-    priceInput.value = option && option.dataset.price ? option.dataset.price : '';
-}
-
+function updatePrice(sel){const ip=sel.parentElement.nextElementSibling.firstElementChild; const opt=sel.selectedOptions[0]; ip.value=opt?.dataset.price||'';}
 function saveOrder(){
-    const rows = document.querySelectorAll('#order-table tbody tr');
-    if(rows.length === 0){ alert('请添加产品'); return; }
-    const items = [];
-    rows.forEach(r => {
-        const sel = r.querySelector('select');
-        const prodId = parseInt(sel.value);
-        if(!prodId) return;
-        const prodName = sel.selectedOptions[0].text;
-        const price = parseFloat(r.querySelector('td:nth-child(2) input').value);
-        const qty = parseInt(r.querySelector('td:nth-child(3) input').value);
-        const discount = parseFloat(r.querySelector('td:nth-child(4) input').value);
-        items.push({product_id: prodId, product_name: prodName, price, quantity: qty, discount});
-    });
-    fetch('/api/orders',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({items})
-    })
-    .then(r => r.json())
-    .then(d => {
-        alert('订单已保存');
-        document.querySelector('#order-table tbody').innerHTML = '';
-        loadToday();
-    });
-}
-
-function loadToday(){
-    fetch('/api/orders/today')
-    .then(r => r.json())
-    .then(data => {
-        document.getElementById('summary').innerHTML = `订单数：${data.orderCount} | 总件数：${data.totalQty} | 营业额：${data.totalAmount.toFixed(2)}`;
-        let ps = '<table><tr><th>产品</th><th>销量</th><th>销售额</th></tr>';
-        data.products.forEach(p => { ps += `<tr><td>${p.product_name}</td><td>${p.total_qty}</td><td>${p.total_amount.toFixed(2)}</td></tr>`; });
-        ps += '</table>'; document.getElementById('product-summary').innerHTML = ps;
-        let html = '<table><tr><th>订单ID</th><th>时间</th><th>产品</th><th>数量</th><th>单价</th><th>优惠</th><th>小计</th></tr>';
-        data.orders.forEach(o => { o.items.forEach(i => { html += `<tr><td>${o.id}</td><td>${o.created_at}</td><td>${i.product_name}</td><td>${i.quantity}</td><td>${i.price}</td><td>${i.discount}</td><td>${i.subtotal.toFixed(2)}</td></tr>`; }); });
-        html += '</table>'; document.getElementById('orders').innerHTML = html;
-    });
-}
-
-loadProducts();
-loadToday();
-</script>
-</body>
-</html>
+    const platform_id=parseInt(document.getElementById('order-platform').value);
+    if(!platform_id){alert('请选择订单平台');return;}
+    const rows=document.querySelectorAll('#order-table tbody tr');
+    if(rows.length===0){alert('请添加产品');return;}
+    const items=[];
+    rows.forEach(r=>{const sel=r.querySelector('select'); const pid=parseInt(sel.value); if(!pid) return; const pname=sel.selectedOptions[0].text; const price=parseFloat(r.querySelector('td:nth-child(2) input').value); const qty=parseInt(r.querySelector('td:nth-child(3) input').value); const disc=parseFloat(r.querySelector('td:nth-child(4) input').value); items.push({product_id:pid, product_name:pname, price, quantity:qty, discount:disc});});
+    fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items, platform_id})})
+    .then(r=>r.json()).
