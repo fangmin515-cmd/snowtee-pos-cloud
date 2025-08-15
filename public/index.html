@@ -73,50 +73,116 @@ td input { width:80px; }
 </section>
 
 <script>
-let products=[],platforms=[];
-function loadProducts(){fetch('/api/products').then(r=>r.json()).then(d=>products=d);}
-function loadPlatforms(){
-    fetch('/api/platforms').then(r=>r.json()).then(d=>{
-        platforms=d;
-        const sel=document.getElementById('order-platform');
-        sel.innerHTML='<option value="">请选择平台</option>';
-        platforms.forEach(p=>{const o=document.createElement('option'); o.value=p.id; o.textContent=p.name; sel.appendChild(o);});
+let products = [];
+let platforms = [];
+
+// 加载产品列表
+function loadProducts() {
+    fetch('/api/products')
+        .then(res => res.json())
+        .then(data => products = data);
+}
+
+// 加载平台列表
+function loadPlatforms() {
+    fetch('/api/platforms')
+        .then(res => res.json())
+        .then(data => {
+            platforms = data;
+            const sel = document.getElementById('order-platform');
+            sel.innerHTML = '<option value="">请选择平台</option>';
+            platforms.forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.id;
+                o.textContent = p.name;
+                sel.appendChild(o);
+            });
+        });
+}
+
+// 上架产品
+function addProduct() {
+    const name = document.getElementById('new-product-name').value.trim();
+    const price = parseFloat(document.getElementById('new-product-price').value);
+    if (!name || isNaN(price)) { alert('请填写产品名和价格'); return; }
+    fetch('/api/products', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name, price})
+    }).then(r=>r.json()).then(()=>{
+        alert('产品已上架');
+        document.getElementById('new-product-name').value='';
+        document.getElementById('new-product-price').value='';
+        loadProducts();
     });
 }
-function addProduct(){
-    const name=document.getElementById('new-product-name').value.trim();
-    const price=parseFloat(document.getElementById('new-product-price').value);
-    if(!name || isNaN(price)){alert('请填写产品名和价格');return;}
-    fetch('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,price})})
-    .then(r=>r.json()).then(()=>{alert('产品已上架');document.getElementById('new-product-name').value='';document.getElementById('new-product-price').value='';loadProducts();});
+
+// 上架平台
+function addPlatform() {
+    const name = document.getElementById('new-platform-name').value.trim();
+    if(!name){ alert('请填写平台名'); return; }
+    fetch('/api/platforms',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name})
+    }).then(r=>r.json()).then(()=>{
+        alert('平台已上架');
+        document.getElementById('new-platform-name').value='';
+        loadPlatforms();
+    });
 }
-function addPlatform(){
-    const name=document.getElementById('new-platform-name').value.trim();
-    if(!name){alert('请填写平台名');return;}
-    fetch('/api/platforms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
-    .then(r=>r.json()).then(()=>{alert('平台已上架');document.getElementById('new-platform-name').value='';loadPlatforms();});
-}
+
+// 添加新订单行
 function addOrderRow(){
     const tbody=document.querySelector('#order-table tbody');
     const row=document.createElement('tr');
+
     const tdSelect=document.createElement('td');
     const sel=document.createElement('select'); sel.onchange=()=>updatePrice(sel);
     const dopt=document.createElement('option'); dopt.value=''; dopt.textContent='请选择'; sel.appendChild(dopt);
-    products.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;o.dataset.price=p.price;sel.appendChild(o);});
+    products.forEach(p=>{ const o=document.createElement('option'); o.value=p.id; o.textContent=p.name; o.dataset.price=p.price; sel.appendChild(o); });
     tdSelect.appendChild(sel); tdSelect.setAttribute('data-label','产品'); row.appendChild(tdSelect);
-    const tdPrice=document.createElement('td'); const ip=document.createElement('input'); ip.type='number';ip.step='0.01'; ip.readOnly=true; tdPrice.appendChild(ip); tdPrice.setAttribute('data-label','单价'); row.appendChild(tdPrice);
+
+    const tdPrice=document.createElement('td'); const ip=document.createElement('input'); ip.type='number'; ip.step='0.01'; ip.readOnly=true; tdPrice.appendChild(ip); tdPrice.setAttribute('data-label','单价'); row.appendChild(tdPrice);
+
     const tdQty=document.createElement('td'); const iq=document.createElement('input'); iq.type='number'; iq.value=1; tdQty.appendChild(iq); tdQty.setAttribute('data-label','数量'); row.appendChild(tdQty);
-    const tdDisc=document.createElement('td'); const idisc=document.createElement('input'); idisc.type='number'; idisc.step='0.01'; idisc.value=0; tdDisc.appendChild(idisc); tdDisc.setAttribute('data-label','优惠'); row.appendChild(tdDisc);
+
+    const tdDisc=document.createElement('td'); const idisc=document.createElement('input'); idisc.type='number'; idisc.step='0.01'; idisc.value=0; tdDisc.appendChild(idisc); tdDisc.setAttribute('data-label','优惠金额'); row.appendChild(tdDisc);
+
     const tdRemove=document.createElement('td'); const btn=document.createElement('button'); btn.textContent='删除'; btn.onclick=()=>row.remove(); tdRemove.appendChild(btn); tdRemove.setAttribute('data-label','操作'); row.appendChild(tdRemove);
+
     tbody.appendChild(row);
 }
-function updatePrice(sel){const ip=sel.parentElement.nextElementSibling.firstElementChild; const opt=sel.selectedOptions[0]; ip.value=opt?.dataset.price||'';}
+
+// 更新单价
+function updatePrice(sel){ const ip=sel.parentElement.nextElementSibling.firstElementChild; const opt=sel.selectedOptions[0]; ip.value=opt?.dataset.price||''; }
+
+// 保存订单
 function saveOrder(){
     const platform_id=parseInt(document.getElementById('order-platform').value);
-    if(!platform_id){alert('请选择订单平台');return;}
+    if(!platform_id){ alert('请选择订单平台'); return; }
     const rows=document.querySelectorAll('#order-table tbody tr');
-    if(rows.length===0){alert('请添加产品');return;}
+    if(rows.length===0){ alert('请添加产品'); return; }
     const items=[];
-    rows.forEach(r=>{const sel=r.querySelector('select'); const pid=parseInt(sel.value); if(!pid) return; const pname=sel.selectedOptions[0].text; const price=parseFloat(r.querySelector('td:nth-child(2) input').value); const qty=parseInt(r.querySelector('td:nth-child(3) input').value); const disc=parseFloat(r.querySelector('td:nth-child(4) input').value); items.push({product_id:pid, product_name:pname, price, quantity:qty, discount:disc});});
-    fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items, platform_id})})
-    .then(r=>r.json()).
+    rows.forEach(r=>{
+        const sel=r.querySelector('select'); const pid=parseInt(sel.value); if(!pid) return;
+        const pname=sel.selectedOptions[0].text;
+        const price=parseFloat(r.querySelector('td:nth-child(2) input').value);
+        const qty=parseInt(r.querySelector('td:nth-child(3) input').value);
+        const disc=parseFloat(r.querySelector('td:nth-child(4) input').value);
+        items.push({product_id:pid, product_name:pname, price, quantity:qty, discount:disc});
+    });
+    if(items.length===0){ alert('订单中无有效产品'); return; }
+    fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items,platform_id})})
+    .then(r=>r.json())
+    .then(()=>{ alert('订单保存成功'); document.querySelector('#order-table tbody').innerHTML=''; loadTodayOrders(); });
+}
+
+// 加载当日订单及统计
+function loadTodayOrders(){
+    fetch('/api/orders/today').then(r=>r.json()).then(data=>{
+        document.getElementById('summary').innerHTML=`订单数: ${data.orderCount}, 产品总数: ${data.totalQty}, 营业额: ${data.totalAmount.toFixed(2)}`;
+        // 产品汇总
+        let htmlProducts='<table><tr><th>产品</th><th>数量</th><th>金额</th></tr>';
+        data.products.forEach(p=> htmlProducts+=`<tr><td>${p.product_name}</td><td>${p.total_qty}</td><td>${p.total_amount.toFixed(2)}</td></tr>`);
+        htmlProducts+='</table>'; document.getElementById('product
