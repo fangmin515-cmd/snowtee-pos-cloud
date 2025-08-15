@@ -37,18 +37,122 @@ app.post('/api/products', (req, res) => {
     res.json({ id, name, price });
 });
 
-// 订单相关API
+// 订单相关API（支持优惠券折扣）
 app.post('/api/orders', (req, res) => {
-    const { items, total, channel } = req.body;
+    const { items, discount = 0, channel } = req.body;
     const id = nanoid();
     const date = new Date().toISOString().split('T')[0];
+    
+    let total = 0;
+    items.forEach(item => { total += item.price * item.qty; });
+    total = total - discount;
+
     db.prepare('INSERT INTO orders (id, items, total, channel, date) VALUES (?, ?, ?, ?, ?)')
       .run(id, JSON.stringify(items), total, channel, date);
-    res.json({ id });
+
+    res.json({ id, total });
 });
 
+const frontend_html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snowtee POS 云端版</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
+h1 { color: #333; }
+label { display: block; margin-top: 10px; }
+input, select, button { padding: 8px; margin-top: 5px; }
+table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+table, th, td { border: 1px solid #ccc; }
+th, td { padding: 8px; text-align: left; }
+</style>
+</head>
+<body>
+<h1>Snowtee POS 云端版</h1>
+
+<section id="product-section">
+    <h2>产品管理</h2>
+    <label>产品名称 <input id="prod-name"></label>
+    <label>价格 <input id="prod-price" type="number" step="0.01"></label>
+    <button onclick="addProduct()">添加产品</button>
+    <table id="product-table"><thead><tr><th>名称</th><th>价格</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section id="order-section">
+    <h2>订单录入</h2>
+    <label>产品 <select id="order-product"></select></label>
+    <label>数量 <input id="order-qty" type="number" value="1"></label>
+    <label>渠道 
+        <select id="order-channel">
+            <option>门店</option>
+            <option>Grab</option>
+            <option>Foodpanda</option>
+            <option>Lineman</option>
+        </select>
+    </label>
+    <label>优惠券金额 <input id="order-discount" type="number" step="0.01" value="0"></label>
+    <button onclick="addOrder()">保存订单</button>
+</section>
+
+<script>
+const API = location.origin + '/api';
+
+async function loadProducts() {
+    const res = await fetch(API + '/products');
+    const products = await res.json();
+    const tbody = document.querySelector('#product-table tbody');
+    const select = document.querySelector('#order-product');
+    tbody.innerHTML = '';
+    select.innerHTML = '';
+    products.forEach(p => {
+        tbody.innerHTML += `<tr><td>${p.name}</td><td>${p.price}</td></tr>`;
+        select.innerHTML += `<option value="${p.id}" data-price="${p.price}">${p.name}</option>`;
+    });
+}
+
+async function addProduct() {
+    const name = document.getElementById('prod-name').value;
+    const price = parseFloat(document.getElementById('prod-price').value);
+    if (!name || isNaN(price)) return alert('请填写完整产品信息');
+    await fetch(API + '/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, price })
+    });
+    loadProducts();
+}
+
+async function addOrder() {
+    const prodSelect = document.getElementById('order-product');
+    const prodId = prodSelect.value;
+    const prodName = prodSelect.options[prodSelect.selectedIndex].text;
+    const price = parseFloat(prodSelect.options[prodSelect.selectedIndex].dataset.price);
+    const qty = parseInt(document.getElementById('order-qty').value);
+    const channel = document.getElementById('order-channel').value;
+    const discount = parseFloat(document.getElementById('order-discount').value) || 0;
+
+    if (!prodId || qty <= 0) return alert('请选择产品并填写数量');
+
+    const items = [{ id: prodId, name: prodName, price, qty }];
+    
+    const res = await fetch(API + '/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, discount, channel })
+    });
+    const data = await res.json();
+    alert('订单已保存，总价: ' + data.total);
+}
+
+loadProducts();
+</script>
+</body>
+</html>`;
+
 app.get('/', (req, res) => {
-    res.send("<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>Snowtee POS \u4e91\u7aef\u7248</title>\n<style>\nbody { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }\nh1 { color: #333; }\nlabel { display: block; margin-top: 10px; }\ninput, select, button { padding: 8px; margin-top: 5px; }\ntable { width: 100%; border-collapse: collapse; margin-top: 15px; }\ntable, th, td { border: 1px solid #ccc; }\nth, td { padding: 8px; text-align: left; }\n</style>\n</head>\n<body>\n<h1>Snowtee POS \u4e91\u7aef\u7248</h1>\n<section id=\"product-section\">\n    <h2>\u4ea7\u54c1\u7ba1\u7406</h2>\n    <label>\u4ea7\u54c1\u540d\u79f0 <input id=\"prod-name\"></label>\n    <label>\u4ef7\u683c <input id=\"prod-price\" type=\"number\" step=\"0.01\"></label>\n    <button onclick=\"addProduct()\">\u6dfb\u52a0\u4ea7\u54c1</button>\n    <table id=\"product-table\"><thead><tr><th>\u540d\u79f0</th><th>\u4ef7\u683c</th></tr></thead><tbody></tbody></table>\n</section>\n<section id=\"order-section\">\n    <h2>\u8ba2\u5355\u5f55\u5165</h2>\n    <label>\u4ea7\u54c1 <select id=\"order-product\"></select></label>\n    <label>\u6570\u91cf <input id=\"order-qty\" type=\"number\" value=\"1\"></label>\n    <label>\u6e20\u9053 \n        <select id=\"order-channel\">\n            <option>\u95e8\u5e97</option>\n            <option>Grab</option>\n            <option>Foodpanda</option>\n            <option>Lineman</option>\n        </select>\n    </label>\n    <button onclick=\"addOrder()\">\u4fdd\u5b58\u8ba2\u5355</button>\n</section>\n<script>\nconst API = location.origin + '/api';\n\nasync function loadProducts() {\n    const res = await fetch(API + '/products');\n    const products = await res.json();\n    const tbody = document.querySelector('#product-table tbody');\n    const select = document.querySelector('#order-product');\n    tbody.innerHTML = '';\n    select.innerHTML = '';\n    products.forEach(p => {\n        tbody.innerHTML += `<tr><td>${p.name}</td><td>${p.price}</td></tr>`;\n        select.innerHTML += `<option value=\"${p.id}\" data-price=\"${p.price}\">${p.name}</option>`;\n    });\n}\n\nasync function addProduct() {\n    const name = document.getElementById('prod-name').value;\n    const price = parseFloat(document.getElementById('prod-price').value);\n    if (!name || isNaN(price)) return alert('\u8bf7\u586b\u5199\u5b8c\u6574\u4ea7\u54c1\u4fe1\u606f');\n    await fetch(API + '/products', {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ name, price })\n    });\n    loadProducts();\n}\n\nasync function addOrder() {\n    const prodSelect = document.getElementById('order-product');\n    const prodId = prodSelect.value;\n    const prodName = prodSelect.options[prodSelect.selectedIndex].text;\n    const price = parseFloat(prodSelect.options[prodSelect.selectedIndex].dataset.price);\n    const qty = parseInt(document.getElementById('order-qty').value);\n    const channel = document.getElementById('order-channel').value;\n    if (!prodId || qty <= 0) return alert('\u8bf7\u9009\u62e9\u4ea7\u54c1\u5e76\u586b\u5199\u6570\u91cf');\n    const items = [{ id: prodId, name: prodName, price, qty }];\n    const total = price * qty;\n    await fetch(API + '/orders', {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ items, total, channel })\n    });\n    alert('\u8ba2\u5355\u5df2\u4fdd\u5b58');\n}\n\nloadProducts();\n</script>\n</body>\n</html>");
+    res.send(frontend_html);
 });
 
 const PORT = process.env.PORT || 3000;
