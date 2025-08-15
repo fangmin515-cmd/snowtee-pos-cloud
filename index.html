@@ -1,1 +1,122 @@
-<!-- public/index.html 完整内容，移动端优化，产品/平台上架、订单录入、多产品优惠金额、导出Excel -->
+<!-- public/index.html 完整内容，移动端优化，产品/平台上架、订单录入、多产品优惠金额、导出Excel --><!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POS 录入系统</title>
+<style>
+body{font-family:sans-serif;margin:0;padding:0;background:#f8f8f8}
+header{background:#4CAF50;color:#fff;padding:1rem;text-align:center;font-size:1.2rem}
+.container{padding:1rem}
+button{padding:.5rem 1rem;margin:.2rem}
+input,select{padding:.3rem;margin:.2rem;width:100%}
+table{width:100%;border-collapse:collapse;margin-top:1rem}
+th,td{border:1px solid #ccc;padding:.5rem;text-align:center;font-size:.9rem}
+</style>
+</head>
+<body>
+<header>POS 录入系统</header>
+<div class="container">
+<h3>产品上架</h3>
+<input type="text" id="productName" placeholder="产品名">
+<input type="number" id="productPrice" placeholder="价格">
+<select id="productPlatform"></select>
+<button onclick="addProduct()">上架产品</button>
+
+<h3>平台上架</h3>
+<input type="text" id="platformName" placeholder="平台名">
+<button onclick="addPlatform()">上架平台</button>
+
+<h3>新订单</h3>
+<select id="orderPlatform"></select>
+<div id="orderItems"></div>
+<button onclick="addOrderItem()">+ 产品</button>
+<button onclick="saveOrder()">保存订单</button>
+
+<h3>当日订单明细 <button onclick="exportOrders()">导出Excel</button></h3>
+<div id="todayOrders"></div>
+</div>
+
+<script>
+// 获取平台列表
+function loadPlatforms(){
+  fetch("/api/platforms").then(r=>r.json()).then(data=>{
+    const sel1 = document.getElementById("productPlatform");
+    const sel2 = document.getElementById("orderPlatform");
+    sel1.innerHTML=""; sel2.innerHTML="";
+    data.forEach(p=>{
+      sel1.innerHTML+=`<option value="${p.name}">${p.name}</option>`;
+      sel2.innerHTML+=`<option value="${p.name}">${p.name}</option>`;
+    })
+  })
+}
+
+// 添加平台
+function addPlatform(){
+  const name = document.getElementById("platformName").value;
+  fetch("/api/platforms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})})
+  .then(r=>r.json()).then(()=>{loadPlatforms(); document.getElementById("platformName").value="";})
+}
+
+// 获取产品列表
+function loadProducts(){
+  fetch("/api/products").then(r=>r.json()).then(data=>{
+    window.products = data;
+  })
+}
+
+// 添加产品
+function addProduct(){
+  const name = document.getElementById("productName").value;
+  const price = parseFloat(document.getElementById("productPrice").value);
+  const platform = document.getElementById("productPlatform").value;
+  fetch("/api/products",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,price,platform})})
+  .then(r=>r.json()).then(()=>{loadProducts(); document.getElementById("productName").value=""; document.getElementById("productPrice").value="";})
+}
+
+// 新订单
+function addOrderItem(){
+  const div = document.createElement("div");
+  div.innerHTML=`<select class="orderProduct">${window.products.map(p=>`<option value="${p.id}" data-price="${p.price}">${p.name}</option>`).join('')}</select>
+<input type="number" class="orderQty" value="1" min="1">
+<input type="number" class="orderCoupon" value="0" placeholder="优惠金额">`;
+  document.getElementById("orderItems").appendChild(div);
+}
+
+// 保存订单
+function saveOrder(){
+  const platform = document.getElementById("orderPlatform").value;
+  const items=[]; let total=0;
+  document.querySelectorAll("#orderItems div").forEach(div=>{
+    const sel = div.querySelector(".orderProduct");
+    const qty = parseInt(div.querySelector(".orderQty").value);
+    const coupon = parseFloat(div.querySelector(".orderCoupon").value);
+    const price = parseFloat(sel.selectedOptions[0].dataset.price);
+    total += qty*price + coupon;
+    items.push({id:sel.value,name:sel.selectedOptions[0].text,qty,price,coupon});
+  });
+  fetch("/api/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items,total,platform})})
+  .then(r=>r.json()).then(()=>{document.getElementById("orderItems").innerHTML=""; loadTodayOrders();})
+}
+
+// 当日订单
+function loadTodayOrders(){
+  fetch("/api/orders/today").then(r=>r.json()).then(data=>{
+    let html=`<table><tr><th>ID</th><th>Items</th><th>Total</th><th>Platform</th><th>Created</th></tr>`;
+    data.forEach(o=>{
+      html+=`<tr><td>${o.id}</td><td>${o.items}</td><td>${o.total}</td><td>${o.platform}</td><td>${o.created_at}</td></tr>`;
+    });
+    html+="</table>";
+    document.getElementById("todayOrders").innerHTML=html;
+  })
+}
+
+// 导出 Excel
+function exportOrders(){
+  window.open("/api/orders/export");
+}
+
+loadPlatforms();
+loadProducts();
+loadTodayOrders();
+</script>
