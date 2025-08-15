@@ -1,157 +1,185 @@
+
 const express = require('express');
-const cors = require('cors');
-const Database = require('better-sqlite3');
-const { nanoid } = require('nanoid');
+const sqlite3 = require('sqlite3').verbose();
+const bodyParser = require('body-parser');
+const path = require('path');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const dbFile = path.join(__dirname, 'orders.db');
+const db = new sqlite3.Database(dbFile);
 
-const db = new Database('db.sqlite');
+app.use(bodyParser.json());
 
-// 初始化数据表
-db.prepare(`CREATE TABLE IF NOT EXISTS products (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    price REAL
-)`).run();
-
-db.prepare(`CREATE TABLE IF NOT EXISTS orders (
-    id TEXT PRIMARY KEY,
-    items TEXT,
-    total REAL,
-    channel TEXT,
-    date TEXT
-)`).run();
-
-// 产品相关API
-app.get('/api/products', (req, res) => {
-    const rows = db.prepare('SELECT * FROM products').all();
-    res.json(rows);
+// 初始化数据库
+db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT,
+        total REAL
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS order_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER,
+        product_name TEXT,
+        quantity INTEGER,
+        price REAL,
+        discount REAL,
+        subtotal REAL
+    )`);
 });
 
-app.post('/api/products', (req, res) => {
-    const { name, price } = req.body;
-    const id = nanoid();
-    db.prepare('INSERT INTO products (id, name, price) VALUES (?, ?, ?)').run(id, name, price);
-    res.json({ id, name, price });
-});
-
-// 订单相关API（支持优惠券折扣）
-app.post('/api/orders', (req, res) => {
-    const { items, discount = 0, channel } = req.body;
-    const id = nanoid();
-    const date = new Date().toISOString().split('T')[0];
-    
-    let total = 0;
-    items.forEach(item => { total += item.price * item.qty; });
-    total = total - discount;
-
-    db.prepare('INSERT INTO orders (id, items, total, channel, date) VALUES (?, ?, ?, ?, ?)')
-      .run(id, JSON.stringify(items), total, channel, date);
-
-    res.json({ id, total });
-});
-
-const frontend_html = `<!DOCTYPE html>
-<html lang="zh-CN">
+// 提供首页（完整前端嵌入HTML）
+app.get('/', (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html lang="zh">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Snowtee POS 云端版</title>
+<title>Snowtee POS 多商品下单系统</title>
 <style>
-body { font-family: Arial, sans-serif; margin: 20px; background: #fafafa; }
-h1 { color: #333; }
-label { display: block; margin-top: 10px; }
-input, select, button { padding: 8px; margin-top: 5px; }
-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-table, th, td { border: 1px solid #ccc; }
-th, td { padding: 8px; text-align: left; }
+body { font-family: Arial; margin: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
+input { padding: 4px; }
+button { padding: 6px 10px; margin: 2px; }
 </style>
 </head>
 <body>
-<h1>Snowtee POS 云端版</h1>
+<h1>Snowtee POS 多商品下单系统</h1>
 
-<section id="product-section">
-    <h2>产品管理</h2>
-    <label>产品名称 <input id="prod-name"></label>
-    <label>价格 <input id="prod-price" type="number" step="0.01"></label>
-    <button onclick="addProduct()">添加产品</button>
-    <table id="product-table"><thead><tr><th>名称</th><th>价格</th></tr></thead><tbody></tbody></table>
-</section>
+<div id="order-form">
+<h3>新订单</h3>
+<table id="order-table">
+<thead>
+<tr><th>产品名</th><th>单价</th><th>数量</th><th>优惠金额</th><th>操作</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+<button onclick="addRow()">添加产品</button>
+<br><br>
+<button onclick="saveOrder()">保存订单</button>
+</div>
 
-<section id="order-section">
-    <h2>订单录入</h2>
-    <label>产品 <select id="order-product"></select></label>
-    <label>数量 <input id="order-qty" type="number" value="1"></label>
-    <label>渠道 
-        <select id="order-channel">
-            <option>门店</option>
-            <option>Grab</option>
-            <option>Foodpanda</option>
-            <option>Lineman</option>
-        </select>
-    </label>
-    <label>优惠券金额 <input id="order-discount" type="number" step="0.01" value="0"></label>
-    <button onclick="addOrder()">保存订单</button>
-</section>
+<h3>当日统计</h3>
+<div id="summary"></div>
+
+<h3>各产品销量及金额</h3>
+<div id="product-summary"></div>
+
+<h3>当日订单明细</h3>
+<div id="orders"></div>
 
 <script>
-const API = location.origin + '/api';
-
-async function loadProducts() {
-    const res = await fetch(API + '/products');
-    const products = await res.json();
-    const tbody = document.querySelector('#product-table tbody');
-    const select = document.querySelector('#order-product');
-    tbody.innerHTML = '';
-    select.innerHTML = '';
-    products.forEach(p => {
-        tbody.innerHTML += `<tr><td>${p.name}</td><td>${p.price}</td></tr>`;
-        select.innerHTML += `<option value="${p.id}" data-price="${p.price}">${p.name}</option>`;
-    });
+function addRow(product='', price='', qty=1, discount=0) {
+    const tbody = document.querySelector('#order-table tbody');
+    const row = document.createElement('tr');
+    row.innerHTML = \`
+        <td><input value="\${product}"></td>
+        <td><input type="number" step="0.01" value="\${price}"></td>
+        <td><input type="number" value="\${qty}"></td>
+        <td><input type="number" step="0.01" value="\${discount}"></td>
+        <td><button onclick="this.parentElement.parentElement.remove()">删除</button></td>
+    \`;
+    tbody.appendChild(row);
 }
 
-async function addProduct() {
-    const name = document.getElementById('prod-name').value;
-    const price = parseFloat(document.getElementById('prod-price').value);
-    if (!name || isNaN(price)) return alert('请填写完整产品信息');
-    await fetch(API + '/products', {
+function saveOrder() {
+    const rows = document.querySelectorAll('#order-table tbody tr');
+    const items = [];
+    rows.forEach(r => {
+        const inputs = r.querySelectorAll('input');
+        items.push({
+            product_name: inputs[0].value,
+            price: parseFloat(inputs[1].value),
+            quantity: parseInt(inputs[2].value),
+            discount: parseFloat(inputs[3].value)
+        });
+    });
+    fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, price })
+        body: JSON.stringify({ items })
+    }).then(r => r.json()).then(d => {
+        alert('订单已保存');
+        loadToday();
     });
-    loadProducts();
 }
 
-async function addOrder() {
-    const prodSelect = document.getElementById('order-product');
-    const prodId = prodSelect.value;
-    const prodName = prodSelect.options[prodSelect.selectedIndex].text;
-    const price = parseFloat(prodSelect.options[prodSelect.selectedIndex].dataset.price);
-    const qty = parseInt(document.getElementById('order-qty').value);
-    const channel = document.getElementById('order-channel').value;
-    const discount = parseFloat(document.getElementById('order-discount').value) || 0;
+function loadToday() {
+    fetch('/api/orders/today').then(r => r.json()).then(data => {
+        document.getElementById('summary').innerHTML = \`
+订单数：\${data.orderCount} | 总件数：\${data.totalQty} | 营业额：\${data.totalAmount.toFixed(2)}
+\`;
+        let ps = '<table><tr><th>产品</th><th>销量</th><th>销售额</th></tr>';
+        data.products.forEach(p => {
+            ps += \`<tr><td>\${p.product_name}</td><td>\${p.total_qty}</td><td>\${p.total_amount.toFixed(2)}</td></tr>\`;
+        });
+        ps += '</table>';
+        document.getElementById('product-summary').innerHTML = ps;
 
-    if (!prodId || qty <= 0) return alert('请选择产品并填写数量');
-
-    const items = [{ id: prodId, name: prodName, price, qty }];
-    
-    const res = await fetch(API + '/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, discount, channel })
+        let html = '<table><tr><th>订单ID</th><th>时间</th><th>产品</th><th>数量</th><th>单价</th><th>优惠</th><th>小计</th></tr>';
+        data.orders.forEach(o => {
+            o.items.forEach(i => {
+                html += \`<tr><td>\${o.id}</td><td>\${o.created_at}</td><td>\${i.product_name}</td><td>\${i.quantity}</td><td>\${i.price}</td><td>\${i.discount}</td><td>\${i.subtotal.toFixed(2)}</td></tr>\`;
+            });
+        });
+        html += '</table>';
+        document.getElementById('orders').innerHTML = html;
     });
-    const data = await res.json();
-    alert('订单已保存，总价: ' + data.total);
 }
 
-loadProducts();
+addRow();
+loadToday();
 </script>
 </body>
-</html>`;
+</html>
+    `);
+});
 
-app.get('/', (req, res) => { res.send(frontend_html); });
+// 创建订单接口
+app.post('/api/orders', (req, res) => {
+    const { items } = req.body;
+    const createdAt = new Date().toISOString();
+    let total = 0;
+    items.forEach(it => {
+        it.subtotal = (it.price - it.discount) * it.quantity;
+        total += it.subtotal;
+    });
+    db.run(`INSERT INTO orders (created_at, total) VALUES (?, ?)`, [createdAt, total], function(err) {
+        if (err) return res.status(500).json({error: err.message});
+        const orderId = this.lastID;
+        const stmt = db.prepare(`INSERT INTO order_items (order_id, product_name, quantity, price, discount, subtotal) VALUES (?, ?, ?, ?, ?, ?)`);
+        items.forEach(it => stmt.run(orderId, it.product_name, it.quantity, it.price, it.discount, it.subtotal));
+        stmt.finalize();
+        res.json({ id: orderId });
+    });
+});
+
+// 获取当天订单和统计
+app.get('/api/orders/today', (req, res) => {
+    const today = new Date().toISOString().split('T')[0];
+    db.all(`SELECT * FROM orders WHERE date(created_at) = ?`, [today], (err, orders) => {
+        if (err) return res.status(500).json({error: err.message});
+        const orderIds = orders.map(o => o.id);
+        if (orderIds.length === 0) return res.json({orderCount:0, totalQty:0, totalAmount:0, products:[], orders:[]});
+        db.all(`SELECT * FROM order_items WHERE order_id IN (${orderIds.join(',')})`, (err, items) => {
+            if (err) return res.status(500).json({error: err.message});
+            const productsMap = {};
+            items.forEach(i => {
+                if (!productsMap[i.product_name]) productsMap[i.product_name]={product_name:i.product_name,total_qty:0,total_amount:0};
+                productsMap[i.product_name].total_qty += i.quantity;
+                productsMap[i.product_name].total_amount += i.subtotal;
+            });
+            const totalQty = items.reduce((sum,i)=>sum+i.quantity,0);
+            const totalAmount = orders.reduce((sum,o)=>sum+o.total,0);
+            const productSummary = Object.values(productsMap);
+            const orderMap = {};
+            orders.forEach(o => orderMap[o.id]={...o,items:[]});
+            items.forEach(i=>orderMap[i.order_id].items.push(i));
+            res.json({orderCount:orders.length,totalQty,totalAmount,products:productSummary,orders:Object.values(orderMap)});
+        });
+    });
+});
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT,()=>console.log('Server running on port '+PORT));
