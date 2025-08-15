@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>POS 录入系统</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;margin:8px;background:#f5f6f8}
+h1{font-size:20px;text-align:center}
+section{background:#fff;padding:12px;border-radius:8px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.08)}
+label{display:block;margin:6px 0;font-weight:600}
+input,select,button{width:100%;padding:10px;margin-top:6px;border-radius:6px;border:1px solid #ddd;box-sizing:border-box;font-size:16px}
+button{background:#1976d2;color:#fff;border:none}
+.small{display:inline-block;width:48%;box-sizing:border-box}
+.table{width:100%;border-collapse:collapse;margin-top:8px}
+.table th,.table td{border:1px solid #e3e3e3;padding:8px;text-align:center;font-size:14px}
+</style>
+</head>
+<body>
+<h1>POS 录入系统</h1>
+<section id="platform-section">
+  <h3>销售平台</h3>
+  <div id="platform-list">加载中...</div>
+  <label>新增销售平台</label>
+  <input id="new-platform-name" placeholder="输入平台名称">
+  <button onclick="addPlatform()">上架平台</button>
+</section>
+<section id="product-section">
+  <h3>产品上架</h3>
+  <label>产品名称</label>
+  <input id="new-product-name" placeholder="输入产品名称">
+  <label>价格</label>
+  <input id="new-product-price" type="number" step="0.01" placeholder="输入价格">
+  <button onclick="addProduct()">上架产品</button>
+</section>
+<section id="order-section">
+  <h3>新订单录入</h3>
+  <label>选择销售平台</label>
+  <select id="order-platform"><option value=''>请选择平台</option></select>
+  <div id="order-rows"></div>
+  <button onclick="addOrderRow()" class="small">+ 添加产品</button>
+  <button onclick="saveOrder()" class="small">保存订单</button>
+</section>
+<section id="week-section">
+  <h3>当周订单汇总（按产品）</h3>
+  <div id="week-summary">加载中...</div>
+</section>
+<section id="today-section">
+  <h3>当天订单明细</h3>
+  <div id="today-summary"></div>
+  <div style="margin-top:6px"><button onclick="exportToday()">导出当日订单（CSV）</button></div>
+  <div id="today-orders"></div>
+</section>
+<script>
+async function api(path, opts){ const r = await fetch(path, opts||{}); if(!r.ok) { const t = await r.text(); console.error('API error', path, t); throw new Error(t); } return r.json().catch(()=>null); }
+async function loadPlatforms(){ const list = await api('/api/platforms'); document.getElementById('platform-list').innerHTML = list.map(p=>`<div>${p.id}. ${p.name}</div>`).join('')||'<div>暂无平台</div>'; const sel=document.getElementById('order-platform'); sel.innerHTML='<option value=\"\">请选择平台</option>'; list.forEach(p=>{ const o=document.createElement('option'); o.value=p.id; o.text=p.name; sel.appendChild(o); }); }
+async function loadProducts(){ const list = await api('/api/products'); window.PRODUCTS = list; }
+async function addPlatform(){ const name=document.getElementById('new-platform-name').value.trim(); if(!name){alert('请输入平台名称');return;} await api('/api/platforms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}); document.getElementById('new-platform-name').value=''; await loadPlatforms(); }
+async function addProduct(){ const name=document.getElementById('new-product-name').value.trim(); const price=parseFloat(document.getElementById('new-product-price').value); if(!name||isNaN(price)){alert('请输入产品名和价格');return;} await api('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,price})}); document.getElementById('new-product-name').value=''; document.getElementById('new-product-price').value=''; await loadProducts(); }
+function addOrderRow(){ const rows=document.getElementById('order-rows'); const div=document.createElement('div'); div.style.borderTop='1px solid #eee'; div.style.padding='8px 0'; const sel=document.createElement('select'); sel.innerHTML='<option value=\"\">请选择产品</option>' + (window.PRODUCTS||[]).map(p=>`<option value=\"${p.id}\" data-price=\"${p.price}\">${p.name}</option>`).join(''); sel.onchange=function(){ priceInput.value = sel.selectedOptions[0].dataset.price || ''; }; div.appendChild(sel); const priceInput=document.createElement('input'); priceInput.placeholder='单价'; priceInput.readOnly=true; priceInput.style.marginTop='6px'; div.appendChild(priceInput); const qtyInput=document.createElement('input'); qtyInput.type='number'; qtyInput.value=1; qtyInput.placeholder='数量'; qtyInput.style.marginTop='6px'; div.appendChild(qtyInput); const discInput=document.createElement('input'); discInput.type='number'; discInput.value=0; discInput.placeholder='优惠券金额（可为负）'; discInput.style.marginTop='6px'; div.appendChild(discInput); const btn=document.createElement('button'); btn.textContent='删除此行'; btn.style.marginTop='6px'; btn.onclick=()=>div.remove(); div.appendChild(btn); rows.appendChild(div); }
+async function saveOrder(){ const platform_id=parseInt(document.getElementById('order-platform').value); if(isNaN(platform_id)){alert('请选择销售平台');return;} const rows=document.querySelectorAll('#order-rows > div'); if(rows.length===0){alert('请添加至少一项产品');return;} const items=[]; for(const r of rows){ const sel=r.querySelector('select'); const pid=parseInt(sel.value); if(!pid) continue; const pname=sel.selectedOptions[0].text; const price=parseFloat(r.querySelector('input[placeholder=\"单价\"]').value || sel.selectedOptions[0].dataset.price || 0); const qty=parseInt(r.querySelector('input[placeholder=\"数量\"]').value || 1); const discount=parseFloat(r.querySelector('input[placeholder^=\"优惠券\"]').value || 0); items.push({product_id:pid, product_name:pname, price, quantity:qty, discount}); } if(!items.length){alert('订单中无有效产品');return;} await api('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items, platform_id})}); document.getElementById('order-rows').innerHTML=''; alert('订单已保存'); await refreshToday(); await refreshWeek(); }
+async function refreshWeek(){ const data = await api('/api/orders/week-summary'); const c=document.getElementById('week-summary'); if(!data||!data.length){ c.innerHTML='<div>本周无订单</div>'; return;} let html='<table class=\"table\"><thead><tr><th>产品</th><th>本周销量</th><th>本周营收</th></tr></thead><tbody>'; data.forEach(r=> html += `<tr><td>${r.product_name}</td><td>${r.total_qty}</td><td>${Number(r.total_amount).toFixed(2)}</td></tr>`); html += '</tbody></table>'; c.innerHTML=html; }
+async function refreshToday(){ const data = await api('/api/orders/today'); const sum=document.getElementById('today-summary'); if(!data){ sum.innerHTML=''; return;} sum.innerHTML = `<div>订单数：${data.orderCount}，产品总数：${data.totalQty}，营业额：${Number(data.totalAmount).toFixed(2)}</div>`; let html = '<h4>按产品汇总</h4><table class=\"table\"><thead><tr><th>产品</th><th>销量</th><th>营收</th></tr></thead><tbody>'; (data.productSummary||[]).forEach(p=> html += `<tr><td>${p.product_name}</td><td>${p.qty}</td><td>${Number(p.amount).toFixed(2)}</td></tr>`); html += '</tbody></table>'; html += '<h4>按平台+产品汇总</h4><table class=\"table\"><thead><tr><th>平台</th><th>产品</th><th>销量</th><th>营收</th></tr></thead><tbody>'; (data.platformProductSummary||[]).forEach(p=> html += `<tr><td>${p.platform}</td><td>${p.product_name}</td><td>${p.qty}</td><td>${Number(p.amount).toFixed(2)}</td></tr>`); html += '</tbody></table>'; html += '<h4>订单明细</h4><table class=\"table\"><thead><tr><th>订单ID</th><th>订单时间</th><th>产品名称</th><th>单价</th><th>数量</th><th>优惠券金额</th><th>小计</th><th>销售平台</th></tr></thead><tbody>'; (data.orders||[]).forEach(o => { (o.items||[]).forEach(it => { html += `<tr><td>${o.id}</td><td>${o.created_at}</td><td>${it.product_name}</td><td>${Number(it.price).toFixed(2)}</td><td>${it.quantity}</td><td>${Number(it.discount).toFixed(2)}</td><td>${Number(it.subtotal).toFixed(2)}</td><td>${it.platform_name || '未指定'}</td></tr>`; }); }); html += '</tbody></table>'; document.getElementById('today-orders').innerHTML = html; }
+function exportToday(){ window.location.href = '/api/orders/today/export'; }
+async function init(){ await loadPlatforms(); await loadProducts(); await refreshWeek(); await refreshToday(); } init();
+</script>
+</body>
+</html>
